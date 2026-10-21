@@ -1,0 +1,887 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="An unofficial operator sandbox for the Washington, Idaho & Montana Railway: run freight, excursions and the Santa Express, and test ideas against simulated futures.">
+<style>html{color-scheme:light}:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>WI&amp;M Dispatcher</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=Libre+Franklin:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a short-line dispatcher's desk — timetable header and route strip, gauge rail left, the month's orders center, ledger below. */
+:root{
+  --paper:#e7ebe3; --card:#f5f7f2; --ink:#1b241e; --muted:#5b685f; --rule:#c3cbbf;
+  --pullman:#2d4a39; --brass:#9a6f1f; --good:#2e7a4c; --warn:#b07a12; --bad:#b0372a;
+  --bandA:#2d4a39; --bandB:#9a6f1f;
+  --f-display:"Big Shoulders Display","Arial Narrow",Impact,sans-serif;
+  --f-body:"Libre Franklin",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --paper:#111813; --card:#18221b; --ink:#e2e7de; --muted:#94a297; --rule:#2b3a30;
+  --pullman:#9cc2a8; --brass:#d9a94b; --good:#5fbf84; --warn:#e0a83a; --bad:#e66a5a;
+  --bandA:#9cc2a8; --bandB:#d9a94b; color-scheme:dark }}
+:root[data-theme="dark"]{
+  --paper:#111813; --card:#18221b; --ink:#e2e7de; --muted:#94a297; --rule:#2b3a30;
+  --pullman:#9cc2a8; --brass:#d9a94b; --good:#5fbf84; --warn:#e0a83a; --bad:#e66a5a;
+  --bandA:#9cc2a8; --bandB:#d9a94b; color-scheme:dark }
+html,body{background:var(--paper);color:var(--ink)}
+body{font-family:var(--f-body);font-size:15px;line-height:1.5}
+.wrap{max-width:1180px;margin:0 auto;padding-block:18px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:18px}
+.num,td.n,.mono{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+.eyebrow{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:600}
+h1,h2,h3{font-family:var(--f-display);font-weight:800;letter-spacing:.02em;text-transform:uppercase;margin:0;text-wrap:balance;line-height:1.05}
+h1{font-size:clamp(30px,6vw,54px);color:var(--pullman);line-height:.95}
+h3{font-size:19px}
+p{margin:0}
+button,select{font:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+
+.top{display:flex;flex-wrap:wrap;gap:14px 24px;align-items:flex-end;justify-content:space-between;border-bottom:3px double var(--ink);padding-bottom:12px}
+.brand{display:flex;flex-direction:column;gap:4px;min-width:0}
+.status{display:flex;flex-wrap:wrap;gap:8px}
+.pill{display:flex;flex-direction:column;padding:6px 12px;border:1px solid var(--rule);background:var(--card);border-radius:4px;min-width:96px}
+.pill b{font-family:var(--f-mono);font-size:17px;font-weight:600}
+.pill span{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.scene{position:relative;border-radius:6px;overflow:hidden;border:1px solid var(--rule);background:#9db7cc}
+.scene canvas{height:260px}
+@media (max-width:600px){.scene canvas{height:190px}}
+.sceneCap{position:absolute;left:16px;top:14px;display:flex;flex-direction:column;gap:2px;padding:8px 12px;background:rgba(14,22,17,.62);color:#f1efe6;border-radius:4px;backdrop-filter:blur(4px);max-width:calc(100% - 32px)}
+.sceneCap .eyebrow{color:#e7c67a}
+.sceneTitle{font-family:var(--f-display);font-weight:800;font-size:clamp(20px,3.6vw,30px);text-transform:uppercase;letter-spacing:.02em;line-height:1}
+.sceneStamp{position:absolute;right:14px;bottom:12px;font-family:var(--f-display);font-weight:800;font-size:clamp(18px,3vw,26px);letter-spacing:.04em;text-transform:uppercase;padding:4px 12px;border:3px solid currentColor;border-radius:4px;transform:rotate(-4deg);background:rgba(245,242,232,.85);line-height:1.1}
+.sceneStamp.up{color:#2a6b43}.sceneStamp.down{color:#a2322a}
+.sceneStamp:empty{display:none}
+.route{overflow-x:auto}
+.route svg{display:block;width:100%;min-width:360px;height:auto}
+
+.tabs{display:flex;gap:4px;flex-wrap:wrap}
+.tab{border:1px solid var(--rule);background:transparent;color:var(--ink);padding:8px 16px;border-radius:3px;font-family:var(--f-display);font-weight:600;font-size:17px;letter-spacing:.05em;text-transform:uppercase}
+.tab[aria-selected="true"]{background:var(--pullman);color:var(--paper);border-color:var(--pullman)}
+
+.grid-op{display:grid;grid-template-columns:270px minmax(0,1fr);gap:18px}
+@media (max-width:820px){.grid-op{grid-template-columns:1fr}}
+.panel{background:var(--card);border:1px solid var(--rule);border-radius:4px;padding:16px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.stack{display:flex;flex-direction:column;gap:18px;min-width:0}
+.gauge{display:flex;flex-direction:column;gap:4px}
+.gauge .row{display:flex;justify-content:space-between;gap:8px;font-size:13px}
+.gauge .row b{font-family:var(--f-mono);font-weight:600}
+.bar{height:8px;background:color-mix(in srgb,var(--rule) 70%,transparent);border-radius:2px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--good)}
+.bar i.warn{background:var(--warn)} .bar i.bad{background:var(--bad)}
+.small{font-size:12.5px;color:var(--muted)}
+.gsec{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:700;border-top:1px solid var(--rule);padding-top:8px}
+
+.dispatch{border:2px solid var(--brass);background:color-mix(in srgb,var(--brass) 7%,var(--card));border-radius:4px;padding:16px;display:flex;flex-direction:column;gap:10px}
+.dispatch .tag{font-family:var(--f-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--brass);font-weight:600}
+.choices{display:flex;flex-direction:column;gap:8px}
+.choice{text-align:left;border:1px solid var(--rule);background:var(--card);color:var(--ink);border-radius:4px;padding:10px 12px;display:flex;flex-direction:column;gap:2px}
+.choice:hover{border-color:var(--brass)}
+.choice b{font-weight:600}
+.choice span{font-size:12.5px;color:var(--muted)}
+.result{border-left:3px solid var(--pullman);padding:6px 10px;background:color-mix(in srgb,var(--pullman) 8%,transparent);font-size:14px}
+
+.settings{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px 20px}
+.group{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--brass);font-weight:700;grid-column:1/-1;border-bottom:1px solid var(--rule);padding-bottom:4px}
+.field{display:flex;flex-direction:column;gap:4px;min-width:0}
+.field label{display:flex;justify-content:space-between;font-size:13px;font-weight:600;gap:8px}
+.field label output{font-family:var(--f-mono);font-weight:600;color:var(--pullman)}
+input[type=range]{width:100%;accent-color:var(--pullman)}
+.check{display:flex;gap:8px;align-items:center;font-size:13.5px}
+input[type=checkbox]{accent-color:var(--pullman);width:16px;height:16px}
+.btn{border:0;background:var(--pullman);color:var(--paper);padding:11px 20px;border-radius:3px;font-family:var(--f-display);font-weight:800;font-size:19px;letter-spacing:.06em;text-transform:uppercase}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn.alt{background:transparent;color:var(--ink);border:1px solid var(--rule);font-size:15px;padding:8px 14px}
+.btn.brass{background:var(--brass);color:var(--paper)}
+.actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+
+.report{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}
+.lines{display:flex;flex-direction:column;font-size:13.5px}
+.lines div{display:flex;justify-content:space-between;gap:10px;padding:3px 0;border-bottom:1px dotted var(--rule)}
+.lines div b{font-family:var(--f-mono);font-weight:400}
+.lines div.total{border-bottom:0;border-top:1px solid var(--ink);font-weight:700}
+.lines div.total b{font-weight:600}
+.notes{margin:0;padding-left:18px;font-size:13.5px;display:flex;flex-direction:column;gap:3px}
+.pos{color:var(--good)} .neg{color:var(--bad)}
+
+.projects{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
+.proj{background:var(--card);border:1px solid var(--rule);border-radius:4px;padding:14px;display:flex;flex-direction:column;gap:8px}
+.proj .meta{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.proj .price{font-family:var(--f-mono);font-weight:600;color:var(--brass);white-space:nowrap}
+.proj p{font-size:13.5px;color:var(--muted);flex:1}
+.owned{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--good);font-weight:700}
+
+.lab{display:grid;grid-template-columns:minmax(0,390px) minmax(0,1fr);gap:18px}
+@media (max-width:900px){.lab{grid-template-columns:1fr}}
+.idealist{display:flex;flex-direction:column;gap:6px;max-height:320px;overflow:auto;padding-right:4px}
+.idealist label{display:flex;gap:8px;align-items:flex-start;font-size:13.5px}
+.idealist label span.c{margin-left:auto;font-family:var(--f-mono);font-size:12px;color:var(--muted);white-space:nowrap}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.txt{font:inherit;font-size:14px;padding:6px 8px;border:1px solid var(--rule);border-radius:3px;background:var(--paper);color:var(--ink);width:100%;min-width:0;box-sizing:border-box}
+details summary{cursor:pointer;font-weight:600;font-size:13.5px}
+.verdict{font-size:16px;line-height:1.45;border-left:4px solid var(--brass);padding:8px 12px;background:color-mix(in srgb,var(--brass) 8%,transparent)}
+.cmp{width:100%;border-collapse:collapse;font-size:13.5px}
+.cmp th,.cmp td{padding:6px 8px;border-bottom:1px solid var(--rule);text-align:right}
+.cmp th:first-child,.cmp td:first-child{text-align:left}
+.cmp thead th{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.key{display:flex;gap:16px;flex-wrap:wrap;font-size:12.5px}
+.key i{display:inline-block;width:14px;height:4px;vertical-align:middle;margin-right:6px}
+canvas{width:100%;height:260px;display:block}
+.scroll{overflow-x:auto}
+table.ledger{border-collapse:collapse;width:100%;font-size:13px;min-width:720px}
+table.ledger th,table.ledger td{padding:5px 8px;border-bottom:1px solid var(--rule);text-align:right;white-space:nowrap}
+table.ledger th:first-child,table.ledger td:first-child{text-align:left}
+table.ledger thead th{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);background:var(--card)}
+.over{border:2px solid var(--bad);background:color-mix(in srgb,var(--bad) 8%,var(--card));border-radius:4px;padding:16px;display:flex;flex-direction:column;gap:10px}
+.foot{font-size:12px;color:var(--muted);max-width:75ch}
+@media (prefers-reduced-motion:no-preference){.bar i{transition:width .5s ease}}
+</style>
+
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <div class="eyebrow">Standard gauge short line · Potlatch, Idaho · operator's sandbox</div>
+      <h1>Washington, Idaho &amp; Montana Ry</h1>
+    </div>
+    <div class="status" id="status"></div>
+  </header>
+  <div class="scene">
+    <canvas id="scene" aria-label="Animated view of the train crossing the Palouse"></canvas>
+    <div class="sceneCap"><div class="eyebrow" id="sceneEyebrow"></div><div class="sceneTitle" id="sceneTitle"></div></div>
+    <div class="sceneStamp" id="sceneStamp"></div>
+  </div>
+  <div class="route" id="routeStrip" aria-label="Route map"></div>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab" role="tab" data-tab="operate" aria-selected="true" id="t-operate">Operate</button>
+    <button class="tab" role="tab" data-tab="projects" aria-selected="false" id="t-projects">Projects</button>
+    <button class="tab" role="tab" data-tab="lab" aria-selected="false" id="t-lab">Idea Lab</button>
+    <button class="tab" role="tab" data-tab="ledger" aria-selected="false" id="t-ledger">Ledger</button>
+  </nav>
+
+  <section id="tab-operate" class="grid-op">
+    <aside class="panel" id="gauges"></aside>
+    <div class="stack">
+      <div id="overBox"></div>
+      <div id="dispatch"></div>
+      <div class="panel">
+        <div class="actions" style="justify-content:space-between">
+          <h3 id="opTitle">Operating plan</h3>
+          <span class="small" id="capLine"></span>
+        </div>
+        <div class="settings" id="settings"></div>
+        <div class="actions">
+          <button class="btn" id="runBtn">Run the month</button>
+          <button class="btn alt" id="run3Btn" title="Runs three months, taking the first option on any dispatch">Run 3 months</button>
+          <span class="small" id="runHint"></span>
+        </div>
+      </div>
+      <div class="panel" id="reportPanel"></div>
+    </div>
+  </section>
+
+  <section id="tab-projects" hidden>
+    <div class="stack">
+      <p class="small" style="max-width:72ch">Equipment, track work and new programs. Buying one here spends game cash. Run a project through the Idea Lab first to see whether it pays off.</p>
+      <div class="projects" id="projectList"></div>
+    </div>
+  </section>
+
+  <section id="tab-lab" hidden>
+    <div class="lab">
+      <div class="panel">
+        <div class="eyebrow">Plan B = the railroad today, plus…</div>
+        <h3>Build the idea</h3>
+        <div class="idealist" id="ideaList"></div>
+        <details>
+          <summary>Change the operating plan in Plan B</summary>
+          <div class="two" style="margin-top:10px" id="bFields"></div>
+        </details>
+        <details>
+          <summary>Add your own idea</summary>
+          <div class="two" style="margin-top:10px">
+            <div class="field" style="grid-column:1/-1"><label for="cName">Name</label><input class="txt" id="cName" placeholder="e.g. Palouse wheat harvest photo train"></div>
+            <div class="field"><label for="cCost">Up-front cost $</label><input class="txt mono" type="number" id="cCost" value="0" min="0" step="1000"></div>
+            <div class="field"><label for="cMonthly">Ongoing $/month</label><input class="txt mono" type="number" id="cMonthly" value="0" min="0" step="100"></div>
+            <div class="field"><label for="cLift">Excursion rider lift %</label><input class="txt mono" type="number" id="cLift" value="0" step="5"></div>
+            <div class="field"><label for="cPer">Extra $ per rider</label><input class="txt mono" type="number" id="cPer" value="0" step="0.5"></div>
+            <div class="field"><label for="cFlat">Flat revenue $/active month</label><input class="txt mono" type="number" id="cFlat" value="0" step="500"></div>
+            <div class="field"><label for="cWhen">Active months</label>
+              <select class="txt" id="cWhen">
+                <option value="all">All year</option><option value="summer">May – September</option><option value="oct">October</option><option value="holiday">November – December</option><option value="dec">December only</option>
+              </select></div>
+          </div>
+        </details>
+        <div class="two">
+          <div class="field"><label for="labH">Horizon</label>
+            <select class="txt" id="labH"><option value="12">1 year</option><option value="36" selected>3 years</option><option value="60">5 years</option></select></div>
+          <div class="field"><label for="labN">Futures simulated</label>
+            <select class="txt" id="labN"><option value="100">100</option><option value="300" selected>300</option><option value="800">800</option></select></div>
+        </div>
+        <button class="btn brass" id="labRun">Compare plans</button>
+        <details>
+          <summary>Model assumptions (applies everywhere)</summary>
+          <div class="two" style="margin-top:10px" id="assumptions"></div>
+          <p class="small" style="margin-top:8px">Replace these with real WI&amp;M figures as you get them: carloads and rates, crew wages, insurance quotes, Santa Express ticket sales.</p>
+        </details>
+      </div>
+      <div class="stack"><div class="panel" id="labOut"></div></div>
+    </div>
+  </section>
+
+  <section id="tab-ledger" hidden>
+    <div class="stack">
+      <div class="panel">
+        <div class="actions" style="justify-content:space-between"><h3>Cash on hand</h3><span class="small">Dashed line is the bank's credit limit</span></div>
+        <canvas id="cashChart" aria-label="Cash over time"></canvas>
+      </div>
+      <div class="panel">
+        <h3>Monthly ledger</h3>
+        <div class="scroll"><table class="ledger" id="ledgerTable"></table></div>
+      </div>
+      <div class="actions"><button class="btn alt" id="newGame">Start over from October 2026</button><span class="small" id="newGameConfirm"></span></div>
+    </div>
+  </section>
+
+  <p class="foot">An unofficial planning sandbox, not affiliated with the Washington, Idaho &amp; Montana Railway. Starting equipment, distances, carloads, rates and costs are rounded game assumptions, not WI&amp;M data. Change them under Model assumptions in the Idea Lab. Progress is saved in this browser.</p>
+</div>
+
+<script>
+(function(){
+const $=q=>document.querySelector(q);
+const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
+const SEASON=[.2,.25,.4,.6,.9,1.1,1.3,1.25,1,1.05,.5,.6];
+const START_M=9, START_Y=2026;
+const ROUTES={
+  princeton:{n:'Potlatch – Princeton',dest:'Princeton',mi:6,fare:25,appeal:1,maxTrips:3},
+  harvard:{n:'Potlatch – Harvard',dest:'Harvard',mi:10,fare:32,appeal:1.12,maxTrips:3},
+  deary:{n:'Potlatch – Deary',dest:'Deary',mi:20,fare:45,appeal:1.3,maxTrips:2},
+  bovill:{n:'Potlatch – Bovill',dest:'Bovill',mi:28,fare:55,appeal:1.42,maxTrips:1,req:'bovill'}};
+const SEASONS={off:{n:'No regular excursions',m:[]},summer:{n:'May – October',m:[4,5,6,7,8,9]},extended:{n:'April – November',m:[3,4,5,6,7,8,9,10]}};
+const DEFAULT_A={baseRiders:120,seatsPerCoach:64,excCrewDay:1500,excCrewTrip:300,fuelPerMile:12,concession:3,elasticity:1.1,
+  santaBase:300,santaRefFare:40,baseCars:70,ratePerCar:780,carsPerTrain:6,freightCrewDay:1100,freightFuelDay:600,
+  fixedMonthly:9000,passIns:3500,locoLease:3500,coachLease:1200,creditLine:100000};
+const A_LABELS={baseRiders:'Peak weekend-day excursion riders',seatsPerCoach:'Seats per coach',excCrewDay:'Excursion crew $ / day',excCrewTrip:'Excursion crew $ / extra round trip',fuelPerMile:'Fuel & wear $ / train-mile',concession:'Concessions $ / rider',elasticity:'Fare sensitivity (1 = normal)',
+  santaBase:'Santa Express demand / evening',santaRefFare:'Typical Santa fare $',baseCars:'Lumber carloads / month (base)',ratePerCar:'Freight revenue $ / car',carsPerTrain:'Cars per freight run',freightCrewDay:'Freight crew $ / day',freightFuelDay:'Freight fuel $ / day',
+  fixedMonthly:'Office, property, compliance $ / mo',passIns:'Passenger insurance rider $ / mo',locoLease:'Locomotive lease $ / mo',coachLease:'Coach lease $ / mo',creditLine:'Bank credit line $'};
+let A={...DEFAULT_A}, s, lastLab=null, labSel={};
+const fmt=n=>(n<0?'−':'')+'$'+Math.abs(Math.round(n)).toLocaleString('en-US');
+const fmtK=n=>{const a=Math.abs(n);return (n<0?'−':'')+'$'+(a>=1e6?(a/1e6).toFixed(2)+'M':a>=1000?(a/1000).toFixed(a>=100000?0:1)+'k':Math.round(a))};
+const clamp=(v,a=0,b=100)=>Math.max(a,Math.min(b,v));
+const clone=o=>JSON.parse(JSON.stringify(o));
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+const monthOf=st=>(START_M+st.t)%12, yearOf=st=>START_Y+Math.floor((START_M+st.t)/12);
+const addRev=(st,n)=>{st.mod.revenue=(st.mod.revenue||0)+n};
+const addCost=(st,n)=>{st.mod.cost=(st.mod.cost||0)+n};
+const coachCount=st=>st.coachLeased+st.coachOwned;
+const leadLoco=st=>[...st.locos].sort((a,b)=>b.cond-a.cond)[0];
+const inSeason=(st,m)=>SEASONS[st.settings.season].m.includes(m)&&m!==11;
+const passengerOps=(st,m)=>inSeason(st,m)||(m===11&&st.owned.santa);
+
+function newState(){return{t:0,cash:250000,rep:50,track:62,goodwill:70,shipper:70,lumber:1,
+  locos:[{n:'WIM 101 · leased road switcher',cond:68,leased:true}],coachLeased:3,coachOwned:0,coachCond:70,
+  owned:{santa:true},
+  settings:{route:'princeton',fare:28,excDays:2,trips:2,consist:3,season:'summer',freightDays:3,mkt:3000,maint:15000,mech:6000,santaFare:40,santaTrips:3},
+  insurance:6000,crewExtra:0,slow:0,suspend:0,rateCut:0,incidents:0,history:[],pending:null,drawnFor:-1,lastResult:null,lastReport:null,mod:{},over:false,custom:null}}
+
+/* ---------- projects ---------- */
+const PROJECTS={
+  lease2:{name:'Lease a second locomotive',cost:5000,monthly:0,desc:'A backup unit. Freight and excursions stop competing for one engine, and a breakdown no longer stops the railroad.',ok:st=>!st.owned.lease2,buy:st=>{st.owned.lease2=true;st.locos.push({n:'WIM 102 · leased road switcher',cond:75,leased:true})}},
+  buyLoco:{name:'Buy a rebuilt GP-class road switcher',cost:325000,monthly:0,desc:'An owned unit in good shape. No lease payment, and it can replace a leased engine.',ok:st=>!st.owned.buyLoco,buy:st=>{st.owned.buyLoco=true;const i=st.locos.findIndex(l=>l.leased);const u={n:'WIM 1910 · owned GP-class',cond:88,leased:false};if(i>=0&&st.locos.length>1)st.locos[i]=u;else st.locos.push(u)}},
+  steam:{name:'Lease a steam locomotive for the season',cost:40000,monthly:6000,desc:'Brings back the steam era on the WI&M. A big draw for excursions and the Santa Express, with expensive upkeep.',ok:st=>!st.owned.steam,buy:st=>{st.owned.steam=true}},
+  coachLease:{name:'Lease another coach',cost:2000,monthly:0,desc:'Adds 64 seats to the pool. Lease cost is counted with fixed costs.',ok:st=>coachCount(st)<8,buy:st=>{st.coachLeased++},repeat:true},
+  coachBuy:{name:'Buy and restore a heavyweight coach',cost:140000,monthly:0,desc:'An owned coach with no lease payment. Brings the fleet condition up.',ok:st=>coachCount(st)<8,buy:st=>{st.coachOwned++;st.coachCond=clamp((st.coachCond*(coachCount(st)-1)+90)/coachCount(st))},repeat:true},
+  openCar:{name:'Open-air car conversion',cost:60000,monthly:0,desc:'A converted flatcar or gondola with benches. Adds summer seats and draws riders May through September.',ok:st=>!st.owned.openCar,buy:st=>{st.owned.openCar=true}},
+  ada:{name:'Accessible coach with wheelchair lift',cost:45000,monthly:0,desc:'Opens the train to more families and groups, and heads off accessibility complaints.',ok:st=>!st.owned.ada,buy:st=>{st.owned.ada=true}},
+  ties:{name:'Tie and surfacing program',cost:120000,monthly:0,desc:'Ties, ballast and surfacing on the worst miles. Track condition +25.',ok:()=>true,buy:st=>{st.track=clamp(st.track+25)},repeat:true},
+  depot:{name:'Restore the Potlatch depot',cost:180000,monthly:800,desc:'Ticket office, gift shop and WI&M history displays. Earns more per rider and builds reputation.',ok:st=>!st.owned.depot,buy:st=>{st.owned.depot=true}},
+  pumpkin:{name:'Fall harvest & pumpkin trains',cost:12000,monthly:0,desc:'October trains to a pumpkin patch along the line. Draws families and sells pumpkins.',ok:st=>!st.owned.pumpkin,buy:st=>{st.owned.pumpkin=true}},
+  dinner:{name:'Dinner train program',cost:90000,monthly:1500,desc:'Kitchen-car refit and a caterer. Two evening runs a month in season at a premium fare.',ok:st=>!st.owned.dinner,buy:st=>{st.owned.dinner=true}},
+  storage:{name:'Car storage contract',cost:15000,monthly:0,desc:'Prepare a siding to store about 40 cars for a Class I railroad. Steady monthly income with some extra track wear.',ok:st=>!st.owned.storage,buy:st=>{st.owned.storage=true}},
+  volunteers:{name:'Volunteer car host program',cost:5000,monthly:300,desc:'Trained volunteers handle tickets, car hosting and history talks. Excursion crew cost drops about 20%.',ok:st=>!st.owned.volunteers,buy:st=>{st.owned.volunteers=true}},
+  bovill:{name:'Upgrade track to Bovill for passengers',cost:450000,monthly:0,desc:'Brings the line past Deary up to passenger standard and opens a full-day Potlatch–Bovill excursion.',ok:st=>!st.owned.bovill,buy:st=>{st.owned.bovill=true}}
+};
+
+/* ---------- dispatches ---------- */
+const EV={
+  preseason:{w:st=>monthOf(st)===2?100:0,title:'Pre-season mechanical inspections',
+    body:st=>`Locomotive and passenger car inspections are due before the season. Locomotives average ${Math.round(avgLoco(st))}% and coaches ${Math.round(st.coachCond)}%.`,
+    choices:st=>{const c=8000+Math.max(0,80-avgLoco(st))*400+Math.max(0,80-st.coachCond)*300;return[
+      {label:`Full inspection with repairs (${fmt(c)})`,hint:'Locomotives +12, coaches +10.',apply:x=>{addCost(x,c);x.locos.forEach(l=>l.cond=clamp(l.cond+12));x.coachCond=clamp(x.coachCond+10);return'Everything passed. The fleet is cleared for the season.'}},
+      {label:'Do the minimum to pass ($8,000)',hint:'About a 30% chance a coach is pulled for the spring.',apply:(x,r)=>{addCost(x,8000);if(r()<.3){x.mod.coachOut=1;return'One coach failed and is out of service this month.'}return'Passed, barely.'}}]}},
+  fra:{w:st=>st.track<62?.9:.25,title:'FRA track inspector on the line',
+    body:st=>`A federal track inspector is riding the line this week. Track condition is ${Math.round(st.track)}%.`,
+    choices:st=>st.track<62?[
+      {label:'Fix the defects now ($25,000)',hint:'Track +8 and no slow orders.',apply:x=>{addCost(x,25000);x.track=clamp(x.track+8);return'Defects repaired. The inspector signed off.'}},
+      {label:'Accept 10 mph slow orders for two months',hint:'No cost now. Freight runs slower and excursions feel it.',apply:x=>{x.slow=2;x.rep=clamp(x.rep-3);return'Slow orders are posted on the worst curves.'}}]:[
+      {label:'Ride along with the inspector',hint:'No defects expected.',apply:x=>{x.rep=clamp(x.rep+1);return'A clean report.'}}]},
+  washout:{w:st=>[3,4].includes(monthOf(st))?1.2:0,title:'Spring runoff undercut a culvert',
+    body:()=>'High water undercut a culvert east of Potlatch. Track crews say it needs work before heavy trains cross.',
+    choices:()=>[
+      {label:'Emergency repair ($38,000)',hint:'Back to normal this month.',apply:x=>{addCost(x,38000);x.track=clamp(x.track+2);return'Culvert replaced and the fill rebuilt.'}},
+      {label:'Temporary fix and slow order ($12,000)',hint:'Lose about a quarter of excursion days; slow orders for 2 months.',apply:x=>{addCost(x,12000);x.mod.excLost=(x.mod.excLost||0)+.25;x.slow=Math.max(x.slow,2);return'Temporary fix in place.'}}]},
+  slump:{w:st=>st.lumber>.85?.45:0,title:'Lumber prices slump',
+    body:()=>'Lumber prices dropped, and Bennett Lumber is cutting a shift at the mill.',
+    choices:()=>[
+      {label:'Offer a 10% rate cut for four months',hint:'Keeps more cars on the rails and keeps the shipper loyal.',apply:x=>{x.rateCut=4;x.lumber=Math.max(.5,x.lumber-.12);x.shipper=clamp(x.shipper+6);return'Bennett appreciated the gesture.'}},
+      {label:'Hold rates',hint:'Carloads fall harder.',apply:x=>{x.lumber=Math.max(.5,x.lumber-.3);x.shipper=clamp(x.shipper-4);return'Volume dropped noticeably.'}}]},
+  expand:{w:st=>st.shipper>65&&!st.expanded?.3:0,title:'Bennett plans to expand',
+    body:()=>'Bennett Lumber is adding capacity and wants more frequent rail service.',
+    choices:()=>[
+      {label:'Commit to one more freight day a week',hint:'Carloads up about 20% for good.',apply:x=>{x.expanded=true;x.settings.freightDays=Math.min(5,x.settings.freightDays+1);x.baseBoost=(x.baseBoost||1)*1.2;x.shipper=clamp(x.shipper+8);return'More cars are coming. Freight runs one more day a week.'}},
+      {label:'Keep current service',hint:'Shipper satisfaction −6.',apply:x=>{x.shipper=clamp(x.shipper-6);return'Bennett will truck the overflow.'}}]},
+  storageOffer:{w:st=>!st.owned.storage?.4:0,title:'Car storage offer',
+    body:()=>'A Class I railroad wants to store about 40 empty cars on your sidings.',
+    choices:()=>[
+      {label:'Accept and prepare a siding ($8,000)',hint:'About $5,500 a month in storage income.',apply:x=>{addCost(x,8000);x.owned.storage=true;return'Storage contract signed.'}},
+      {label:'Decline',hint:'Keep the sidings clear.',apply:()=> 'Declined.'}]},
+  crisi:{w:()=>.22,title:'Federal rail grant window opens',
+    body:()=>'A federal rail infrastructure grant is accepting applications. It requires a 20% local match.',
+    choices:()=>[
+      {label:'Apply ($15,000 in engineering and grant writing)',hint:'About a 35% chance of a major track rebuild, paying a $60,000 match.',apply:(x,r)=>{addCost(x,15000);if(r()<.35){addCost(x,60000);x.track=clamp(x.track+35);return'Awarded. A big track rebuild is under way for the cost of the match.'}return'Not selected this cycle.'}},
+      {label:'Skip this cycle',hint:'',apply:()=> 'Skipped.'}]},
+  tourism:{w:()=>.35,title:'Idaho tourism marketing grant',
+    body:()=>'A state tourism grant is open to rural attractions in north central Idaho.',
+    choices:()=>[
+      {label:'Apply ($500 in prep)',hint:'About a 40% chance at $10,000.',apply:(x,r)=>{addCost(x,500);if(r()<.4){addRev(x,10000);return'Awarded $10,000.'}return'Not funded this round.'}},
+      {label:'Skip it',hint:'',apply:()=> 'Skipped.'}]},
+  crossing:{w:st=>st.goodwill<50?3:0,title:'Potlatch crossing complaints',
+    body:()=>'Residents say freight switching blocks crossings during school drop-off and horns are waking the neighborhood.',
+    choices:()=>[
+      {label:'Shift switching and hold a town meeting ($2,000)',hint:'Goodwill +15, shipper −2.',apply:x=>{addCost(x,2000);x.goodwill=clamp(x.goodwill+15);x.shipper=clamp(x.shipper-2);return'The town meeting went well.'}},
+      {label:'Fund a quiet zone study ($8,000)',hint:'Goodwill +22.',apply:x=>{addCost(x,8000);x.goodwill=clamp(x.goodwill+22);return'The city is pleased you are taking it seriously.'}},
+      {label:'Ignore it',hint:'The city may act.',apply:(x,r)=>{x.goodwill=clamp(x.goodwill-8);if(r()<.35){addCost(x,4000);return'The city passed a parking and permit fee for events, $4,000.'}return'Nothing came of it, this time.'}}]},
+  engineer:{w:()=>.4,title:'A certified engineer gives notice',
+    body:()=>'One of your certified engineers is leaving for a Class I job.',
+    choices:()=>[
+      {label:'Hire and certify a replacement',hint:'+$700/month in crew cost.',apply:x=>{x.crewExtra+=700;return'Replacement hired and in training.'}},
+      {label:'Cover with overtime',hint:'$4,000 now and a tired crew.',apply:x=>{addCost(x,4000);x.shipper=clamp(x.shipper-2);leadLoco(x).cond=clamp(leadLoco(x).cond-3);return'The crew is stretched thin.'}}]},
+  charter:{w:st=>inSeason(st,monthOf(st))?.5:0,title:'Charter request',
+    body:()=>'A university alumni group wants a private charter train on a Saturday.',
+    choices:()=>[
+      {label:'Run the charter ($9,500)',hint:'Uses about 5% of the month\'s excursion days.',apply:x=>{addRev(x,9500);x.mod.excLost=(x.mod.excLost||0)+.05;x.rep=clamp(x.rep+2);return'A full train of Vandals and Cougars.'}},
+      {label:'Decline',hint:'',apply:()=> 'Declined.'}]},
+  smoke:{w:st=>monthOf(st)===7?1.5:0,title:'Wildfire smoke over the Palouse',
+    body:()=>'Air quality is poor and forecast to stay bad for about a week.',
+    choices:()=>[
+      {label:'Cancel excursions for the week',hint:'Lose about 23% of excursion days.',apply:x=>{x.mod.excLost=(x.mod.excLost||0)+.23;return'Excursions cancelled. Refunds issued.'}},
+      {label:'Run anyway',hint:'Reputation −5.',apply:x=>{x.rep=clamp(x.rep-5);return'Ran in the smoke. Reviews were rough.'}}]},
+  viral:{w:()=>.35,title:'A video of the train goes viral',
+    body:()=>'A drone clip of your train rolling through the Palouse hills is everywhere this week.',
+    choices:()=>[
+      {label:'Boost it with ads ($2,500)',hint:'Reputation +6 and a marketing surge.',apply:x=>{addCost(x,2500);x.mod.mkt=6000;x.rep=clamp(x.rep+6);return'The surge is on.'}},
+      {label:'Enjoy the attention',hint:'Reputation +6.',apply:x=>{x.rep=clamp(x.rep+6);return'Free publicity.'}}]},
+  insurance:{w:st=>monthOf(st)===0?4:0,title:'Insurance renewal',
+    body:st=>`Your liability carrier wants to raise the premium. You pay ${fmt(st.insurance)} a month now.`,
+    choices:()=>[
+      {label:'Hire a broker to shop it ($1,500)',hint:'About half the time the increase is much smaller.',apply:(x,r)=>{addCost(x,1500);x.insurance+=r()<.55?300:1200;return`New premium: ${fmt(x.insurance)}/month.`}},
+      {label:'Accept the renewal',hint:'+$1,200/month.',apply:x=>{x.insurance+=1200;return`Premium is now ${fmt(x.insurance)}/month.`}}]},
+  artifacts:{w:()=>.18,title:'A Potlatch family offers WI&M artifacts',
+    body:()=>'A longtime Potlatch family offers original WI&M lanterns, timetables and photographs, plus a $20,000 gift if you put them on display.',
+    choices:()=>[
+      {label:'Accept and build a display ($3,000)',hint:'+$20,000, reputation +3.',apply:x=>{addCost(x,3000);addRev(x,20000);x.rep=clamp(x.rep+3);return'The collection is on display.'}},
+      {label:'Decline',hint:'',apply:()=> 'Declined with thanks.'}]},
+  slip:{w:st=>passengerOps(st,monthOf(st))?.3:0,title:'A passenger slipped on the platform',
+    body:()=>'A rider fell boarding at Potlatch and is asking you to cover her medical bills.',
+    choices:()=>[
+      {label:'Settle and add platform lighting ($10,500)',hint:'Closes the matter.',apply:x=>{addCost(x,10500);return'Settled, and the platform has new lighting.'}},
+      {label:'Contest the claim',hint:'Cheaper if you win.',apply:(x,r)=>{if(r()<.6){addCost(x,4000);return'Claim dismissed. Legal fees came to $4,000.'}addCost(x,25000);x.rep=clamp(x.rep-4);return'You lost. $25,000 plus bad press.'}}]},
+  recall:{w:st=>st.coachLeased>0?.2:0,title:'Lessor recalling a coach',
+    body:()=>'The owner of one of your leased coaches wants it back unless you buy it.',
+    choices:()=>[
+      {label:'Buy it ($65,000)',hint:'No more lease payment on that car.',apply:x=>{addCost(x,65000);x.coachLeased--;x.coachOwned++;return'The coach is yours.'}},
+      {label:'Return it',hint:'One fewer coach.',apply:x=>{x.coachLeased--;x.settings.consist=Math.min(x.settings.consist,Math.max(1,coachCount(x)));return'Coach returned.'}}]}
+};
+function avgLoco(st){return st.locos.reduce((a,b)=>a+b.cond,0)/st.locos.length}
+function drawEvent(st,r){
+  const ids=Object.keys(EV),ws=ids.map(k=>EV[k].w(st));
+  const f=ids.find((k,i)=>ws[i]>=100);if(f)return f;
+  if(r()>.6)return null;
+  const tot=ws.reduce((a,b)=>a+b,0);if(!tot)return null;
+  let x=r()*tot;for(let i=0;i<ids.length;i++){x-=ws[i];if(x<=0)return ids[i]}return null;
+}
+function customActive(w,m){return w==='all'||(w==='summer'&&m>=4&&m<=8)||(w==='oct'&&m===9)||(w==='holiday'&&(m===10||m===11))||(w==='dec'&&m===11)}
+
+/* ---------- monthly engine ---------- */
+function simulateMonth(st,r){
+  const m=monthOf(st),set=st.settings,mod=st.mod||{},notes=[],W=4.33;
+  const route=ROUTES[set.route]&&(!ROUTES[set.route].req||st.owned[ROUTES[set.route].req])?ROUTES[set.route]:ROUTES.princeton;
+  const suspended=st.suspend>0, slow=st.slow>0;
+  const locos=st.locos.length, lead=leadLoco(st);
+  let excDays=inSeason(st,m)&&!suspended?set.excDays:0;
+  let fd=set.freightDays;
+  if(locos<2&&excDays>2){const lost=excDays-2;fd=Math.max(1,fd-lost);notes.push(`With one locomotive, weekday excursions took ${lost} freight day${lost>1?'s':''} a week.`)}
+  if(suspended)notes.push('Passenger service suspended this month while regulators review the derailment.');
+  // weather
+  let frLost=0,exLost=mod.excLost||0;
+  if([0,1,11].includes(m)){const sn=r()*.25;frLost+=sn;exLost+=sn;if(sn>.15)notes.push(`Snow and ice cost about ${Math.round(sn*100)}% of the month's train days.`)}
+  // breakdowns
+  if(lead.cond<55){const p=(55-lead.cond)/160,days=(fd+excDays)*W,bd=Math.round(days*p*(.5+r()));
+    if(bd>0){if(locos>1){notes.push(`${lead.n} failed ${bd}× and the second unit covered.`)}
+      else{const f=Math.min(.6,bd/Math.max(1,days));frLost+=f;exLost+=f;st.rep=clamp(st.rep-bd);st.shipper=clamp(st.shipper-bd*2);notes.push(`${lead.n} failed ${bd}× with no backup, so trains were annulled.`)}}}
+  frLost=Math.min(1,frLost);exLost=Math.min(1,exLost);
+  // freight
+  const fDays=fd*W*(1-frLost);
+  const demandCars=A.baseCars*(st.baseBoost||1)*st.lumber*(.7+.3*st.shipper/100)*(.9+.2*r());
+  const capCars=fDays*A.carsPerTrain*(slow?.85:1);
+  const cars=Math.round(Math.min(demandCars,capCars));
+  const served=demandCars?cars/demandCars:1;
+  if(served<.9)notes.push(`Freight service could not keep up: ${Math.round(demandCars-cars)} carloads went by truck.`);
+  if(slow)notes.push('Slow orders are in effect on the worst track.');
+  const rate=A.ratePerCar*(st.rateCut>0?.9:1);
+  // excursions
+  const repF=.5+st.rep/100, mktF=1+.25*Math.log10(1+((passengerOps(st,m)?set.mkt:0)+(mod.mkt||0))/400);
+  const trips=Math.min(set.trips,route.maxTrips);
+  const coachAvail=Math.max(0,coachCount(st)-(mod.coachOut||0));
+  const consist=Math.min(set.consist,coachAvail);
+  const openSeats=st.owned.openCar&&m>=4&&m<=8?A.seatsPerCoach:0;
+  const seats=consist*A.seatsPerCoach+openSeats, cap=trips*seats;
+  let mult=route.appeal*(st.owned.steam?1.35:1)*(st.owned.ada?1.03:1)*(st.owned.depot?1.04:1)*(openSeats?1.08:1)*(slow?.9:1)*(.5+.5*st.coachCond/100+.25);
+  let perRider=A.concession+(st.owned.depot?4:0);
+  if(st.owned.pumpkin&&m===9){mult*=1.6;perRider+=3}
+  const c=st.custom,cAct=c&&customActive(c.when,m);
+  if(cAct){mult*=1+(c.lift||0)/100;perRider+=c.perRider||0}
+  const priceF=Math.pow(route.fare/Math.max(1,set.fare),A.elasticity);
+  const wknd=Math.min(excDays,2)*W,wk=Math.max(0,excDays-2)*W,act=1-exLost;
+  const dW=A.baseRiders*SEASON[m]*repF*mktF*priceF*mult*(.85+.3*r()),dK=dW*.3;
+  const excRiders=excDays?Math.round((Math.min(dW,cap)*wknd+Math.min(dK,cap)*wk)*act):0;
+  const excDemand=(dW*wknd+dK*wk)*act, crowd=cap?dW/cap:0;
+  if(excDays&&crowd>1.15)notes.push(`Weekend excursions sold out; about ${Math.round(excDemand-excRiders).toLocaleString()} people couldn't get seats.`);
+  const excOpDays=(wknd+wk)*act;
+  // santa
+  let sRiders=0,sRev=0,sCost=0,sTrips=0;
+  if(m===11&&st.owned.santa&&!suspended){
+    const sDays=6*(1-Math.min(.5,exLost)),capS=set.santaTrips*coachAvail*A.seatsPerCoach;
+    const dS=A.santaBase*repF*mktF*Math.pow(A.santaRefFare/Math.max(1,set.santaFare),A.elasticity)*(st.owned.steam?1.2:1)*(.5+.5*st.coachCond/100+.25)*(.85+.3*r());
+    sRiders=Math.round(Math.min(dS,capS)*sDays);sTrips=sDays*set.santaTrips;
+    sRev=sRiders*set.santaFare;
+    sCost=9000+sDays*(A.excCrewDay+A.excCrewTrip*set.santaTrips)*(st.owned.volunteers?.8:1)+sTrips*6*2*A.fuelPerMile;
+    if(dS>capS*1.1)notes.push(`The Santa Express sold out every evening. Demand was about ${Math.round(dS/capS*100)}% of seats.`);
+    else notes.push(`The Santa Express carried ${sRiders.toLocaleString()} riders over six evenings.`);
+  }
+  // dinner
+  let dRev=0,dCost=0;
+  if(st.owned.dinner&&inSeason(st,m)&&!suspended){const dr=Math.round(Math.min(120,150*repF*SEASON[m]))*2;dRev=dr*95;dCost=dr*95*.4+2*2600}
+  const riders=excRiders+sRiders;
+  const rev={freight:cars*rate,storage:st.owned.storage?5500:0,excursions:excRiders*set.fare,santa:sRev,dinner:dRev,concessions:excRiders*perRider+sRiders*A.concession*1.5,other:(mod.revenue||0)+(cAct?(c.flat||0):0)};
+  let monthly=0;Object.keys(st.owned).forEach(k=>{if(st.owned[k]&&PROJECTS[k])monthly+=PROJECTS[k].monthly});if(c)monthly+=c.monthly||0;
+  const leased=st.locos.filter(l=>l.leased).length;
+  const cost={freightCrew:fDays*A.freightCrewDay+st.crewExtra,freightFuel:fDays*A.freightFuelDay,
+    excCrew:excOpDays*(A.excCrewDay+A.excCrewTrip*(trips-1))*(st.owned.volunteers?.8:1),excFuel:excOpDays*trips*route.mi*2*A.fuelPerMile,
+    santa:sCost,dinner:dCost,
+    fixed:A.fixedMonthly+st.insurance+(passengerOps(st,m)||SEASONS[set.season].m.length?A.passIns:0),
+    leases:leased*A.locoLease+st.coachLeased*A.coachLease,
+    marketing:passengerOps(st,m)?set.mkt:0,track:set.maint,shop:set.mech,programs:monthly,other:mod.cost||0,incident:0};
+  // wear
+  const fTrips=fDays, eTrips=excOpDays*trips+sTrips;
+  st.track=clamp(st.track-(.8+fTrips*.12+eTrips*.02*route.mi/10+([2,3].includes(m)?1.5:0)+(st.owned.storage?.3:0))+set.maint/4000);
+  st.locos.forEach(l=>l.cond=clamp(l.cond-(l===lead?fTrips*.25+eTrips*.08:0)-.3));
+  const shop=set.mech/1500; st.locos.forEach(l=>l.cond=clamp(l.cond+shop*.6/st.locos.length));
+  st.coachCond=clamp(st.coachCond-eTrips*.05-.2+shop*.4);
+  // derailment
+  const pd=(fTrips*.001+eTrips*.0005)*Math.pow((100-st.track)/40,2);
+  if((fTrips+eTrips)>0&&r()<pd){
+    st.incidents++;st.track=clamp(st.track-6);
+    const pass=eTrips>0&&r()<eTrips*.5/(fTrips+eTrips*.5);
+    if(pass){cost.incident=60000;st.rep=clamp(st.rep-20);st.goodwill=clamp(st.goodwill-6);st.suspend=1;notes.push('An excursion train derailed on worn track. No serious injuries, but it cost $60,000 and passenger service is suspended next month.')}
+    else{cost.incident=35000;st.shipper=clamp(st.shipper-8);notes.push('A loaded lumber train derailed. Rerailing and cleanup cost $35,000.')}
+  }
+  // reputation, community, shipper, market
+  if(excDays||sRiders){const target=30+.25*st.track+.2*st.coachCond+(st.owned.steam?10:0)+(st.owned.depot?5:0)+(st.owned.ada?3:0)+(openSeats?2:0)+(route.appeal-1)*25-(crowd>1.3?8*(Math.min(crowd,2.5)-1.3):0)-exLost*15;st.rep=clamp(st.rep+(target-st.rep)*.2)}
+  st.goodwill=clamp(st.goodwill-(fTrips*.05+eTrips*.03+(sRiders?4:0)+(st.owned.storage?.2:0))+1.5);
+  const sTarget=35+55*served+fd*2-(slow?10:0);st.shipper=clamp(st.shipper+(sTarget-st.shipper)*.25);
+  st.lumber=Math.max(.5,Math.min(1.4,st.lumber+(1-st.lumber)*.08+(r()-.5)*.06));
+  if(st.slow>0)st.slow--; if(suspended)st.suspend--; if(st.rateCut>0)st.rateCut--;
+  const R=Object.values(rev).reduce((a,b)=>a+b,0),C=Object.values(cost).reduce((a,b)=>a+b,0),net=R-C;
+  st.cash+=net;
+  const label=`${MONTHS[m].slice(0,3)} ${yearOf(st)}`;
+  st.history.push({label,cars,riders,R,C,net,cash:Math.round(st.cash),rep:Math.round(st.rep)});
+  if(st.cash<-A.creditLine)st.over=true;
+  st.t++;st.mod={};
+  return{label,cars,riders,excRiders,sRiders,rev,cost,R,C,net,notes,cash:st.cash,route:route.n};
+}
+
+/* ---------- play ---------- */
+function prepareMonth(){if(s.drawnFor===s.t||s.over)return;s.mod={};s.pending=drawEvent(s,Math.random);s.drawnFor=s.t;s.lastResult=null}
+function applyChoice(i){const ev=EV[s.pending],ch=ev.choices(s)[i];s.lastResult={title:ev.title,label:ch.label,msg:ch.apply(s,Math.random)};s.pending=null}
+function choose(i){if(!EV[s.pending])return;applyChoice(i);save();render()}
+function runMonth(){if(s.pending||s.over)return;s.lastReport=simulateMonth(s,Math.random);prepareMonth();save();render()}
+function runMany(n){for(let i=0;i<n&&!s.over;i++){if(s.pending)applyChoice(0);s.lastReport=simulateMonth(s,Math.random);prepareMonth()}save();render()}
+
+/* ---------- settings UI ---------- */
+function settingDefs(st){
+  const routeOpts=Object.entries(ROUTES).map(([k,r])=>({v:k,n:`${r.n} · ${r.mi} mi`+(r.req&&!st.owned[r.req]?' (needs track upgrade)':''),dis:r.req&&!st.owned[r.req]}));
+  const rt=ROUTES[st.settings.route];
+  const d=[
+    {g:'Excursions'},
+    {k:'season',l:'Excursion season',type:'select',opts:Object.entries(SEASONS).map(([k,x])=>({v:k,n:x.n}))},
+    {k:'route',l:'Excursion run',type:'select',opts:routeOpts},
+    {k:'fare',l:'Round-trip fare',min:10,max:90,step:1,f:v=>'$'+v},
+    {k:'excDays',l:'Excursion days / week',min:0,max:5,step:1,f:v=>v},
+    {k:'trips',l:'Round trips / day',min:1,max:rt.maxTrips,step:1,f:v=>v},
+    {k:'consist',l:'Coaches in the train',min:1,max:Math.max(1,coachCount(st)),step:1,f:v=>v},
+  ];
+  if(st.owned.santa)d.push({g:'Santa Express · December'},{k:'santaFare',l:'Santa fare',min:15,max:90,step:1,f:v=>'$'+v},{k:'santaTrips',l:'Trains per evening',min:1,max:4,step:1,f:v=>v});
+  d.push({g:'Freight & railroad'},
+    {k:'freightDays',l:'Freight service days / week',min:1,max:5,step:1,f:v=>v},
+    {k:'maint',l:'Track maintenance / month',min:0,max:60000,step:1000,f:fmt},
+    {k:'mech',l:'Shop budget / month',min:0,max:20000,step:500,f:fmt},
+    {k:'mkt',l:'Marketing / month (passenger months)',min:0,max:15000,step:500,f:fmt});
+  return d;
+}
+function renderSettings(){
+  const el=$('#settings'),defs=settingDefs(s),st=s.settings;
+  if(ROUTES[st.route].req&&!s.owned[ROUTES[st.route].req])st.route='princeton';
+  st.trips=Math.min(st.trips,ROUTES[st.route].maxTrips);st.consist=Math.min(st.consist,Math.max(1,coachCount(s)));
+  el.innerHTML=defs.map(d=>d.g?`<div class="group">${d.g}</div>`:d.type==='select'?
+    `<div class="field"><label for="s-${d.k}">${d.l}</label><select class="txt" id="s-${d.k}" data-k="${d.k}">${d.opts.map(o=>`<option value="${o.v}" ${o.v===st[d.k]?'selected':''} ${o.dis?'disabled':''}>${o.n}</option>`).join('')}</select></div>`:
+    `<div class="field"><label for="s-${d.k}">${d.l} <output id="o-${d.k}">${d.f(st[d.k])}</output></label><input type="range" id="s-${d.k}" data-k="${d.k}" min="${d.min}" max="${d.max}" step="${d.step}" value="${st[d.k]}"></div>`).join('');
+  el.querySelectorAll('input[type=range]').forEach(i=>i.oninput=()=>{const k=i.dataset.k;st[k]=+i.value;const d=defs.find(x=>x.k===k);$('#o-'+k).textContent=d.f(st[k]);capLine();save()});
+  el.querySelectorAll('select').forEach(i=>i.onchange=()=>{st[i.dataset.k]=i.value;save();render()});
+  capLine();
+}
+function capLine(){const st=s.settings,rt=ROUTES[st.route],seats=Math.min(st.consist,coachCount(s))*A.seatsPerCoach;
+  $('#capLine').textContent=`${seats} seats per train · ${(seats*Math.min(st.trips,rt.maxTrips)).toLocaleString()} per excursion day`}
+
+/* ---------- render ---------- */
+function bar(v){const cls=v<40?'bad':v<60?'warn':'';return`<div class="bar"><i class="${cls}" style="width:${clamp(v)}%"></i></div>`}
+function g(name,v,txt){return`<div class="gauge"><div class="row"><span>${name}</span><b>${txt??Math.round(v)}</b></div>${bar(v)}</div>`}
+function renderRoute(){
+  const st=[['Palouse',0],['Potlatch',12],['Princeton',18],['Harvard',22],['Deary',32],['Bovill',40]];
+  const rt=ROUTES[s.settings.route], end=12+rt.mi, X=v=>30+v/40*640;
+  const ex=inSeason(s,monthOf(s))||(monthOf(s)===11&&s.owned.santa);
+  const endX=monthOf(s)===11&&!inSeason(s,11)?X(18):X(end);
+  $('#routeStrip').innerHTML=`<svg viewBox="0 0 700 74" role="img" aria-label="WI&M route from Palouse to Bovill with the excursion segment highlighted">
+    <line x1="${X(0)}" y1="34" x2="${X(40)}" y2="34" stroke="var(--rule)" stroke-width="6" stroke-linecap="round"/>
+    <line x1="${X(0)}" y1="34" x2="${X(40)}" y2="34" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="2 6"/>
+    ${ex?`<line x1="${X(12)}" y1="34" x2="${endX}" y2="34" stroke="var(--brass)" stroke-width="6" stroke-linecap="round"/>`:''}
+    ${st.map(([n,v],i)=>{const up=i%2===1;return`<circle cx="${X(v)}" cy="34" r="${n==='Potlatch'?6:4.5}" fill="${n==='Potlatch'?'var(--pullman)':'var(--card)'}" stroke="var(--pullman)" stroke-width="2"/>
+      <text x="${X(v)}" y="${up?18:58}" text-anchor="middle" font-family="Libre Franklin,system-ui,sans-serif" font-size="12" font-weight="${n==='Potlatch'?700:500}" fill="var(--ink)">${n}</text>`}).join('')}
+    <text x="${X(40)}" y="72" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10" fill="var(--muted)">${ex?(monthOf(s)===11&&!inSeason(s,11)?'Santa Express':rt.n):'Freight only this month'} · Bennett Lumber traffic over the whole line</text>
+  </svg>`;
+}
+function render(){
+  const m=monthOf(s);
+  $('#status').innerHTML=`<div class="pill"><span>Timetable</span><b>${MONTHS[m].slice(0,3)} ${yearOf(s)}</b></div>
+    <div class="pill"><span>Cash</span><b class="${s.cash<0?'neg':''}">${fmt(s.cash)}</b></div>
+    <div class="pill"><span>Credit left</span><b>${fmt(Math.max(0,A.creditLine+Math.min(0,s.cash)))}</b></div>`;
+  renderRoute();updateScene();
+  $('#gauges').innerHTML=`<h3>Condition</h3>
+    <div class="gsec">Railroad</div>${g('Track',s.track)}${s.locos.map(l=>g(l.n,l.cond)).join('')}${g(`Coaches (${coachCount(s)})`,s.coachCond)}
+    <div class="gsec">Relationships</div>${g('Passenger reputation',s.rep)}${g('Bennett Lumber satisfaction',s.shipper)}${g('Potlatch goodwill',s.goodwill)}${g('Lumber market',s.lumber*70,(s.lumber*100).toFixed(0)+'%')}
+    <div class="lines" style="margin-top:4px">
+      <div><span>Insurance</span><b>${fmt(s.insurance)}/mo</b></div>
+      <div><span>Leased equipment</span><b>${s.locos.filter(l=>l.leased).length} loco · ${s.coachLeased} coach</b></div>
+      <div><span>Slow orders</span><b>${s.slow?s.slow+' mo':'none'}</b></div>
+      <div><span>Derailments</span><b>${s.incidents}</b></div>
+    </div>
+    <p class="small">Track under about 60% raises derailment risk. A locomotive under 55% starts failing, and with only one unit a failure stops freight and passengers.</p>`;
+  $('#overBox').innerHTML=s.over?`<div class="over"><h3>The bank called the line</h3><p>Cash fell below the ${fmt(A.creditLine)} credit line in ${s.history.at(-1).label}. You ran ${s.history.length} months, moved ${s.history.reduce((a,b)=>a+b.cars,0).toLocaleString()} carloads and carried ${s.history.reduce((a,b)=>a+b.riders,0).toLocaleString()} riders. Here it cost nothing. On the real railroad it would have cost the business.</p><div class="actions"><button class="btn" id="overNew">Start over</button></div></div>`:'';
+  if(s.over)$('#overNew').onclick=()=>{s=newState();prepareMonth();save();render()};
+  let d='';
+  if(s.pending){const ev=EV[s.pending];d=`<div class="dispatch"><span class="tag">Dispatch · ${MONTHS[m]} ${yearOf(s)}</span><h3>${ev.title}</h3><p>${ev.body(s)}</p><div class="choices">${ev.choices(s).map((c,i)=>`<button class="choice" data-choice="${i}"><b>${c.label}</b>${c.hint?`<span>${c.hint}</span>`:''}</button>`).join('')}</div></div>`}
+  else if(s.lastResult)d=`<div class="panel"><span class="eyebrow">Dispatch resolved · ${s.lastResult.title}</span><div class="result"><b>${s.lastResult.label}.</b> ${s.lastResult.msg}</div></div>`;
+  else if(!s.over)d=`<div class="panel"><span class="eyebrow">Dispatch · ${MONTHS[m]} ${yearOf(s)}</span><p>A quiet month on the line. Nothing needs your call.</p></div>`;
+  $('#dispatch').innerHTML=d;
+  document.querySelectorAll('[data-choice]').forEach(b=>b.onclick=()=>choose(+b.dataset.choice));
+  $('#opTitle').textContent=`Operating plan for ${MONTHS[m]}`;
+  renderSettings();
+  $('#runBtn').disabled=!!s.pending||s.over;$('#run3Btn').disabled=s.over;
+  $('#runHint').textContent=s.pending?'Answer the dispatch first.':(!passengerOps(s,m)?'No passenger trains this month. Freight pays the bills.':(m===11&&s.owned.santa?'Santa Express month.':''));
+  renderReport();renderProjects();renderLedger();renderIdeas();
+}
+function renderReport(){
+  const r=s.lastReport,el=$('#reportPanel');
+  if(!r){el.innerHTML=`<h3>Last month's report</h3><p class="small">It's October 2026. You have one leased road switcher, three leased coaches, Bennett Lumber freight on the line, and the first Santa Express season coming in December. Set the plan and run the month.</p>`;return}
+  const L=(k,v)=>v?`<div><span>${k}</span><b>${fmt(v)}</b></div>`:'';
+  el.innerHTML=`<div class="actions" style="justify-content:space-between"><h3>${r.label} report</h3><b class="num ${r.net<0?'neg':'pos'}" style="font-size:20px">${r.net>=0?'+':''}${fmt(r.net)}</b></div>
+  <div class="report">
+    <div class="lines"><div><span>Carloads</span><b>${r.cars}</b></div><div><span>Excursion riders</span><b>${r.excRiders.toLocaleString()}</b></div>${r.sRiders?`<div><span>Santa Express riders</span><b>${r.sRiders.toLocaleString()}</b></div>`:''}<div><span>Cash at month end</span><b>${fmt(r.cash)}</b></div></div>
+    <div class="lines">${L('Freight',r.rev.freight)}${L('Car storage',r.rev.storage)}${L('Excursion fares',r.rev.excursions)}${L('Santa Express',r.rev.santa)}${L('Dinner trains',r.rev.dinner)}${L('Concessions',r.rev.concessions)}${L('Charters, grants, other',r.rev.other)}<div class="total"><span>Revenue</span><b>${fmt(r.R)}</b></div></div>
+    <div class="lines">${L('Freight crew',r.cost.freightCrew)}${L('Freight fuel',r.cost.freightFuel)}${L('Excursion crew',r.cost.excCrew)}${L('Excursion fuel',r.cost.excFuel)}${L('Santa Express costs',r.cost.santa)}${L('Dinner costs',r.cost.dinner)}${L('Office, insurance, compliance',r.cost.fixed)}${L('Equipment leases',r.cost.leases)}${L('Marketing',r.cost.marketing)}${L('Track maintenance',r.cost.track)}${L('Shop',r.cost.shop)}${L('Programs',r.cost.programs)}${L('Dispatch costs',r.cost.other)}${L('Derailment',r.cost.incident)}<div class="total"><span>Costs</span><b>${fmt(r.C)}</b></div></div>
+  </div>${r.notes.length?`<ul class="notes">${r.notes.map(n=>`<li>${n}</li>`).join('')}</ul>`:''}`;
+}
+function renderProjects(){
+  $('#projectList').innerHTML=Object.entries(PROJECTS).map(([k,p])=>{const owned=s.owned[k]&&!p.repeat,can=p.ok(s);
+    return`<div class="proj"><div class="meta"><h3>${p.name}</h3><span class="price">${fmt(p.cost)}</span></div><p>${p.desc}${p.monthly?` Runs ${fmt(p.monthly)}/month.`:''}</p>
+    ${owned?'<span class="owned">In service</span>':`<div class="actions"><button class="btn alt" data-buy="${k}" ${!can||s.over?'disabled':''}>${can?'Buy':'Not available'}</button>${can&&s.cash-p.cost<0?'<span class="small">Uses the credit line</span>':''}</div>`}</div>`}).join('');
+  document.querySelectorAll('[data-buy]').forEach(b=>b.onclick=()=>{const p=PROJECTS[b.dataset.buy];s.cash-=p.cost;p.buy(s);if(s.cash<-A.creditLine)s.over=true;save();render()});
+}
+function renderLedger(){
+  const h=s.history;
+  $('#ledgerTable').innerHTML=`<thead><tr><th>Month</th><th>Carloads</th><th>Riders</th><th>Revenue</th><th>Costs</th><th>Net</th><th>Cash</th><th>Rep</th></tr></thead><tbody>${
+    h.length?[...h].reverse().map(r=>`<tr><td>${r.label}</td><td class="n">${r.cars}</td><td class="n">${r.riders.toLocaleString()}</td><td class="n">${fmt(r.R)}</td><td class="n">${fmt(r.C)}</td><td class="n ${r.net<0?'neg':'pos'}">${fmt(r.net)}</td><td class="n">${fmt(r.cash)}</td><td class="n">${r.rep}</td></tr>`).join(''):'<tr><td colspan="8" class="small">No months run yet.</td></tr>'}</tbody>`;
+  if(!$('#tab-ledger').hidden)drawChart($('#cashChart'),[{p50:[250000,...h.map(r=>r.cash)],color:css('--bandA')}],{labels:['Start',...h.map(r=>r.label)],floor:-A.creditLine});
+}
+
+/* ---------- lab ---------- */
+const B_KEYS=['season','route','fare','excDays','trips','consist','freightDays','maint','mech','mkt','santaFare','santaTrips'];
+function renderIdeas(){
+  const list=Object.entries(PROJECTS).filter(([k,p])=>p.ok(s)&&!(s.owned[k]&&!p.repeat));
+  $('#ideaList').innerHTML=list.map(([k,p])=>`<label for="i-${k}"><input type="checkbox" id="i-${k}" data-idea="${k}" ${labSel[k]?'checked':''}> ${p.name}<span class="c">${fmtK(p.cost)}</span></label>`).join('');
+  document.querySelectorAll('[data-idea]').forEach(c=>c.onchange=()=>{labSel[c.dataset.idea]=c.checked});
+  const bf=$('#bFields');
+  if(!bf.dataset.built){
+    const defs=settingDefs(s).filter(d=>d.k);
+    bf.innerHTML=defs.map(d=>d.type==='select'?`<div class="field"><label for="b-${d.k}">${d.l}</label><select class="txt" id="b-${d.k}" data-bk="${d.k}">${Object.entries(d.k==='route'?ROUTES:SEASONS).map(([k,x])=>`<option value="${k}">${x.n}</option>`).join('')}</select></div>`:
+      `<div class="field"><label for="b-${d.k}">${d.l}</label><input class="txt mono" type="number" id="b-${d.k}" data-bk="${d.k}" step="${d.step}" min="${d.min}"></div>`).join('')+
+      (s.owned.santa?'':`<div class="field"><label for="b-santaFare">Santa fare</label><input class="txt mono" type="number" id="b-santaFare" data-bk="santaFare"></div><div class="field"><label for="b-santaTrips">Santa trains / evening</label><input class="txt mono" type="number" id="b-santaTrips" data-bk="santaTrips"></div>`);
+    bf.querySelectorAll('[data-bk]').forEach(i=>i.addEventListener('input',()=>i.dataset.touched='1'));
+    bf.querySelectorAll('select[data-bk]').forEach(i=>i.addEventListener('change',()=>i.dataset.touched='1'));
+    bf.dataset.built='1';
+  }
+  bf.querySelectorAll('[data-bk]').forEach(i=>{if(i.dataset.touched!=='1')i.value=s.settings[i.dataset.bk]});
+}
+function planB(){
+  const ideas=Object.keys(labSel).filter(k=>labSel[k]);
+  const ov={};document.querySelectorAll('#bFields [data-bk]').forEach(i=>{const k=i.dataset.bk;ov[k]=(k==='route'||k==='season')?i.value:(isFinite(+i.value)&&i.value!==''?+i.value:s.settings[k])});
+  const cName=$('#cName').value.trim(),v=id=>+$(id).value||0;
+  const custom=(cName||v('#cCost')||v('#cMonthly')||v('#cLift')||v('#cPer')||v('#cFlat'))?{name:cName||'Your idea',cost:v('#cCost'),monthly:v('#cMonthly'),lift:v('#cLift'),perRider:v('#cPer'),flat:v('#cFlat'),when:$('#cWhen').value}:null;
+  return{ideas,ov,custom};
+}
+function applyPlan(st,plan){plan.ideas.forEach(k=>{if(PROJECTS[k].ok(st)){st.cash-=PROJECTS[k].cost;PROJECTS[k].buy(st)}});st.settings={...st.settings,...plan.ov};if(plan.custom){st.custom=plan.custom;st.cash-=plan.custom.cost}}
+function runPlan(base,plan,months,seed){
+  const st=clone(base);st.history=[];st.pending=null;st.mod={};st.over=false;
+  if(plan)applyPlan(st,plan);
+  const r=mulberry32(seed),cash=[st.cash];let riders=0,cars=0,minCash=st.cash;
+  for(let i=0;i<months;i++){
+    if(st.over){cash.push(st.cash);continue}
+    st.mod={};const ev=drawEvent(st,r);if(ev)EV[ev].choices(st)[0].apply(st,r);
+    const rep=simulateMonth(st,r);riders+=rep.riders;cars+=rep.cars;cash.push(st.cash);minCash=Math.min(minCash,st.cash);
+  }
+  return{cash,riders,cars,rep:st.rep,over:st.over,minCash,incidents:st.incidents-base.incidents};
+}
+function pct(a,p){const b=[...a].sort((x,y)=>x-y);return b[Math.min(b.length-1,Math.floor(p*(b.length-1)))]}
+function summarize(runs,months){
+  const p10=[],p50=[],p90=[];for(let i=0;i<=months;i++){const col=runs.map(r=>r.cash[i]);p10.push(pct(col,.1));p50.push(pct(col,.5));p90.push(pct(col,.9))}
+  const avg=f=>runs.reduce((a,r)=>a+f(r),0)/runs.length;
+  return{p10,p50,p90,end:p50[months],endLo:p10[months],endHi:p90[months],bust:avg(r=>r.over?1:0),neg:avg(r=>r.minCash<0?1:0),riders:pct(runs.map(r=>r.riders),.5),cars:pct(runs.map(r=>r.cars),.5),rep:avg(r=>r.rep),inc:avg(r=>r.incidents)};
+}
+function runLab(){
+  const months=+$('#labH').value,N=+$('#labN').value,plan=planB(),base=clone(s);base.custom=null;
+  const ra=[],rb=[];for(let i=0;i<N;i++){const seed=1000+i*7919;ra.push(runPlan(base,null,months,seed));rb.push(runPlan(base,plan,months,seed))}
+  lastLab={a:summarize(ra,months),b:summarize(rb,months),months,plan,N,start:s.t,settingsAtRun:{...s.settings}};
+  save();renderLab();
+}
+function planName(plan,cur){const n=plan.ideas.map(k=>PROJECTS[k].name);if(plan.custom)n.push(plan.custom.name);const ch=[];
+  const L={season:v=>SEASONS[v].n+' season',route:v=>ROUTES[v].n,fare:v=>`$${v} fare`,excDays:v=>`${v} excursion days/wk`,trips:v=>`${v} trips/day`,consist:v=>`${v}-coach trains`,freightDays:v=>`${v} freight days/wk`,maint:v=>`${fmtK(v)} track work`,mech:v=>`${fmtK(v)} shop`,mkt:v=>`${fmtK(v)} marketing`,santaFare:v=>`$${v} Santa fare`,santaTrips:v=>`${v} Santa trains/evening`};
+  Object.keys(plan.ov).forEach(k=>{if(plan.ov[k]!==cur[k]&&L[k])ch.push(L[k](plan.ov[k]))});
+  return [...n,...ch].join(' + ')||'no changes'}
+function renderLab(){
+  const el=$('#labOut');
+  if(!lastLab){el.innerHTML=`<span class="eyebrow">How it works</span><h3>Test it before you spend it</h3>
+    <p>Plan A is the WI&amp;M exactly as it runs today. Plan B is the same railroad with the projects and plan changes you pick. Both plans run through the same simulated weather, lumber markets, breakdowns, inspections and dispatches, hundreds of times over. You see the typical outcome, the bad-luck outcome, and how often the idea would have put the railroad into the bank's hands.</p>
+    <p class="small">Try ticking “Lease a second locomotive” or opening the “Potlatch – Harvard” run under Plan B's operating plan, then press Compare plans.</p>`;return}
+  const {a,b,months,plan}=lastLab,diff=b.end-a.end;
+  let pay=null;if(b.p50[0]<a.p50[0])for(let i=1;i<=months;i++){if(b.p50[i]>=a.p50[i]){pay=i;break}}
+  const word=months===12?'one year':`${months/12} years`;
+  let v=`Over ${word}, Plan B finishes <b>${diff>=0?fmt(diff)+' ahead':fmt(-diff)+' behind'}</b> in the typical future.`;
+  if(pay)v+=` It earns back its up-front cost around month ${pay}.`;else if(b.p50[0]<a.p50[0]&&diff<0)v+=' It does not earn back its up-front cost within this horizon.';
+  v+=` In bad-luck futures (the worst 10%) it ends at ${fmt(b.endLo)}, compared with ${fmt(a.endLo)}.`;
+  if(a.bust||b.bust)v+=` The bank calls the line in ${(b.bust*100).toFixed(0)}% of Plan B futures and ${(a.bust*100).toFixed(0)}% of Plan A futures${b.bust-a.bust>.05?'. That is a real increase in risk.':'.'}`;
+  const P=x=>(x*100).toFixed(0)+'%';
+  const row=(k,x,y,f,hi)=>{const same=Math.abs(y-x)<1e-9,good=hi?y>x:y<x;return`<tr><td>${k}</td><td class="num">${f(x)}</td><td class="num ${same?'':good?'pos':'neg'}">${f(y)}</td></tr>`};
+  const t0=lastLab.start;
+  el.innerHTML=`<span class="eyebrow">${lastLab.N} futures · ${word} from ${MONTHS[(START_M+t0)%12]} ${START_Y+Math.floor((START_M+t0)/12)}</span>
+  <h3>Plan B: ${planName(plan,lastLab.settingsAtRun)}</h3>
+  <p class="verdict">${v}</p>
+  <div class="key"><span><i style="background:${css('--bandA')}"></i>Plan A · as it runs today</span><span><i style="background:${css('--bandB')}"></i>Plan B · with the idea</span><span class="small">Lines are the typical future; shading spans the middle 80%.</span></div>
+  <canvas id="labChart" aria-label="Cash comparison"></canvas>
+  <div class="scroll"><table class="cmp"><thead><tr><th></th><th>Plan A</th><th>Plan B</th></tr></thead><tbody>
+    ${row('Typical ending cash',a.end,b.end,fmt,1)}${row('Bad-luck ending cash (worst 10%)',a.endLo,b.endLo,fmt,1)}${row('Good-luck ending cash (best 10%)',a.endHi,b.endHi,fmt,1)}
+    ${row('Futures that dip below $0',a.neg,b.neg,P,0)}${row('Futures where the bank calls the line',a.bust,b.bust,P,0)}
+    ${row('Typical passengers carried',a.riders,b.riders,x=>Math.round(x).toLocaleString(),1)}${row('Typical carloads moved',a.cars,b.cars,x=>Math.round(x).toLocaleString(),1)}
+    ${row('Average ending passenger reputation',a.rep,b.rep,x=>x.toFixed(0),1)}${row('Average derailments',a.inc,b.inc,x=>x.toFixed(2),0)}
+  </tbody></table></div>
+  <div class="actions"><button class="btn alt" id="adoptB">Adopt Plan B in the game</button><span class="small" id="adoptNote"></span></div>`;
+  const labels=[];for(let i=0;i<=months;i++){const t=t0+i;labels.push(i===0?'Now':`${MONTHS[(START_M+t)%12].slice(0,3)} ${String(START_Y+Math.floor((START_M+t)/12)).slice(2)}`)}
+  drawChart($('#labChart'),[{...a,color:css('--bandA')},{...b,color:css('--bandB')}],{labels,floor:-A.creditLine});
+  $('#adoptB').onclick=()=>{const cost=lastLab.plan.ideas.reduce((t,k)=>t+PROJECTS[k].cost,0)+(lastLab.plan.custom?lastLab.plan.custom.cost:0);
+    applyPlan(s,lastLab.plan);if(s.cash<-A.creditLine)s.over=true;labSel={};document.querySelectorAll('#bFields [data-bk]').forEach(i=>i.dataset.touched='0');
+    save();render();$('#adoptNote').textContent=`Adopted. ${fmt(cost)} spent, and the new plan is live on the Operate tab.`};
+}
+
+/* ---------- chart ---------- */
+function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim()}
+function niceStep(r){const p=Math.pow(10,Math.floor(Math.log10(Math.max(1,r)))),f=r/p;return(f<=1?1:f<=2?2:f<=5?5:10)*p}
+function drawChart(cv,series,opt){
+  if(!cv)return;const dpr=window.devicePixelRatio||1,W=cv.clientWidth,H=cv.clientHeight;if(!W)return;
+  cv.width=W*dpr;cv.height=H*dpr;const c=cv.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,W,H);
+  const n=series[0].p50.length;let lo=Infinity,hi=-Infinity;
+  series.forEach(s=>['p10','p50','p90'].forEach(k=>(s[k]||[]).forEach(v=>{lo=Math.min(lo,v);hi=Math.max(hi,v)})));
+  lo=Math.min(lo,opt.floor*1.05,0);hi=Math.max(hi,0);
+  const step=niceStep((hi-lo)/5);lo=Math.floor(lo/step)*step;hi=Math.ceil(hi/step)*step;
+  const pl=62,pr=12,pt=10,pb=26,x=i=>pl+(n<=1?0:i/(n-1))*(W-pl-pr),y=v=>pt+(hi-v)/(hi-lo)*(H-pt-pb);
+  c.font='11px "JetBrains Mono",monospace';c.fillStyle=css('--muted');c.strokeStyle=css('--rule');c.lineWidth=1;c.textAlign='right';c.textBaseline='middle';
+  for(let v=lo;v<=hi+1e-6;v+=step){c.globalAlpha=v===0?1:.6;c.beginPath();c.moveTo(pl,y(v));c.lineTo(W-pr,y(v));c.stroke();c.globalAlpha=1;c.fillText(fmtK(v),pl-6,y(v))}
+  c.setLineDash([4,4]);c.strokeStyle=css('--bad');c.beginPath();c.moveTo(pl,y(opt.floor));c.lineTo(W-pr,y(opt.floor));c.stroke();c.setLineDash([]);
+  c.textAlign='center';c.textBaseline='top';const every=Math.max(1,Math.ceil(n/Math.max(2,Math.floor((W-pl)/70))));
+  for(let i=0;i<n;i+=every)c.fillText(opt.labels[i]||'',x(i),H-pb+8);
+  series.forEach(s=>{
+    if(s.p10){c.globalAlpha=.16;c.fillStyle=s.color;c.beginPath();s.p90.forEach((v,i)=>i?c.lineTo(x(i),y(v)):c.moveTo(x(i),y(v)));for(let i=n-1;i>=0;i--)c.lineTo(x(i),y(s.p10[i]));c.closePath();c.fill();c.globalAlpha=1}
+    c.strokeStyle=s.color;c.lineWidth=2.25;c.beginPath();s.p50.forEach((v,i)=>i?c.lineTo(x(i),y(v)):c.moveTo(x(i),y(v)));c.stroke();
+    c.fillStyle=s.color;c.beginPath();c.arc(x(n-1),y(s.p50[n-1]),3.5,0,7);c.fill();
+  });
+}
+
+/* ---------- animated scene ---------- */
+const PAL={
+  winter:{sky:['#b9c9d6','#eef2f4'],hills:['#dfe7ec','#eef3f6','#f7f9fa'],line:'rgba(120,140,160,.25)',tree:'#2f4b40',ground:'#e9eef1'},
+  night:{sky:['#0b1526','#243556'],hills:['#2d3c52','#3a4b64','#4b5d78'],line:'rgba(255,255,255,.07)',tree:'#122019',ground:'#3d4d66'},
+  spring:{sky:['#7fb0d6','#dbe9f2'],hills:['#5f8d45','#78a552','#93bd62'],line:'rgba(40,70,30,.25)',tree:'#264733',ground:'#86b058'},
+  summer:{sky:['#5f9fd3','#d7e8f2'],hills:['#b8933c','#cfac52','#ddbd66'],line:'rgba(110,80,20,.28)',tree:'#2b4733',ground:'#d6b45c'},
+  fall:{sky:['#8eaecb','#ecdcc0'],hills:['#9a7440','#b28a4c','#c39c5a'],line:'rgba(80,50,20,.28)',tree:'#2d4434',ground:'#b8915a'},
+  late:{sky:['#8d9aa6','#d5d8d6'],hills:['#7c7454','#8f8762','#a29a74'],line:'rgba(50,50,40,.25)',tree:'#2b3d33',ground:'#958c66'}};
+let scene={pal:PAL.fall,night:false,train:[],steam:false,snow:false,slow:false,lights:false};
+const reduceMotion=matchMedia('(prefers-reduced-motion: reduce)').matches;
+function updateScene(){
+  const m=monthOf(s),santa=m===11&&s.owned.santa&&!s.suspend;
+  const pass=(inSeason(s,m)&&s.settings.excDays>0&&!s.suspend)||santa;
+  scene.night=santa;
+  scene.pal=santa?PAL.night:[0,1,11].includes(m)?PAL.winter:m<=4?PAL.spring:m<=7?PAL.summer:m<=9?PAL.fall:PAL.late;
+  scene.snow=[0,1,11].includes(m);scene.slow=s.slow>0;scene.steam=!!s.owned.steam&&pass;scene.lights=santa;
+  const t=[{k:scene.steam?'steam':'diesel'}];
+  if(pass){const n=Math.min(santa?coachCount(s):s.settings.consist,coachCount(s));for(let i=0;i<n;i++)t.push({k:'coach'});if(s.owned.openCar&&m>=4&&m<=8&&!santa)t.push({k:'open'})}
+  else for(let i=0;i<Math.max(3,Math.min(7,A.carsPerTrain));i++)t.push({k:i%3===1?'box':'lumber'});
+  if(!pass&&s.locos.length>1)t.splice(1,0,{k:'diesel'});
+  scene.train=t;
+  const rt=ROUTES[s.settings.route];
+  $('#sceneEyebrow').textContent=`${MONTHS[m]} ${yearOf(s)} · ${santa?'Potlatch depot, evening':pass?rt.n:'Bennett Lumber traffic'}`;
+  $('#sceneTitle').textContent=s.over?'Out of service':santa?'Santa Express':s.suspend?'Passenger service suspended':pass?(scene.steam?'Steam excursion':'Excursion train'):(m<=1?'Winter freight':'Lumber freight');
+  const st=$('#sceneStamp'),r=s.lastReport;
+  if(r){st.textContent=`${r.label} ${r.net>=0?'+':''}${fmtK(r.net)}`;st.className='sceneStamp '+(r.net>=0?'up':'down')}else{st.textContent='';st.className='sceneStamp'}
+  if(reduceMotion)drawScene(0);
+}
+const flakes=Array.from({length:70},()=>({x:Math.random(),y:Math.random(),v:.3+Math.random()*.7,r:.8+Math.random()*1.8}));
+const stars=Array.from({length:60},()=>({x:Math.random(),y:Math.random()*.5,r:Math.random()*1.2+.3}));
+const puffs=[];
+let sceneT=0,lastTS=0,trainX=-200;
+function trackY(x,H){return H*.74+Math.sin(x*.0065+1.2)*H*.035}
+function drawScene(dt){
+  const cv=$('#scene');if(!cv)return;const dpr=Math.min(2,window.devicePixelRatio||1),W=cv.clientWidth,H=cv.clientHeight;if(!W)return;
+  if(cv.width!==Math.round(W*dpr)||cv.height!==Math.round(H*dpr)){cv.width=Math.round(W*dpr);cv.height=Math.round(H*dpr)}
+  const c=cv.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);const P=scene.pal;
+  // sky
+  const sg=c.createLinearGradient(0,0,0,H*.7);sg.addColorStop(0,P.sky[0]);sg.addColorStop(1,P.sky[1]);c.fillStyle=sg;c.fillRect(0,0,W,H);
+  if(scene.night){stars.forEach(st=>{c.globalAlpha=.5+.5*Math.sin(sceneT*2+st.x*40);c.fillStyle='#fff';c.beginPath();c.arc(st.x*W,st.y*H,st.r,0,7);c.fill()});c.globalAlpha=1;
+    c.fillStyle='#f3ecd2';c.beginPath();c.arc(W*.82,H*.2,H*.07,0,7);c.fill();c.fillStyle=P.sky[0];c.beginPath();c.arc(W*.82+H*.03,H*.19,H*.065,0,7);c.fill()}
+  else{c.fillStyle='rgba(255,246,214,.9)';c.beginPath();c.arc(W*.8,H*.22,H*.075,0,7);c.fill();c.fillStyle='rgba(255,246,214,.25)';c.beginPath();c.arc(W*.8,H*.22,H*.13,0,7);c.fill()}
+  // far forested ridge (toward Bovill)
+  c.fillStyle=P.tree;c.globalAlpha=.55;c.beginPath();c.moveTo(0,H*.5);
+  for(let x=0;x<=W;x+=8)c.lineTo(x,H*.47-Math.sin(x*.004+2)*H*.06-Math.sin(x*.013)*H*.02);c.lineTo(W,H);c.lineTo(0,H);c.fill();
+  c.globalAlpha=.7;for(let x=4;x<W;x+=11){const by=H*.47-Math.sin(x*.004+2)*H*.06-Math.sin(x*.013)*H*.02,h=8+((x*7)%9);c.beginPath();c.moveTo(x,by-h);c.lineTo(x-4,by+2);c.lineTo(x+4,by+2);c.fill()}
+  c.globalAlpha=1;
+  // Palouse rolling hills with contour strips
+  const layers=[[.56,.07,.006,0],[.63,.06,.009,2],[.71,.05,.012,4]];
+  layers.forEach(([y0,amp,f,ph],i)=>{
+    const yAt=x=>H*y0-Math.sin(x*f+ph)*H*amp-Math.sin(x*f*2.3+ph*1.7)*H*amp*.4;
+    c.fillStyle=P.hills[i];c.beginPath();c.moveTo(0,H);for(let x=0;x<=W;x+=6)c.lineTo(x,yAt(x));c.lineTo(W,H);c.fill();
+    c.strokeStyle=P.line;c.lineWidth=1;for(let k=1;k<5;k++){c.beginPath();for(let x=0;x<=W;x+=6){const y=yAt(x)+k*H*.018*(1+i*.3);x?c.lineTo(x,y):c.moveTo(x,y)}c.stroke()}
+  });
+  // foreground and depot
+  c.fillStyle=P.ground;c.beginPath();c.moveTo(0,H);for(let x=0;x<=W;x+=6)c.lineTo(x,trackY(x,H)+6);c.lineTo(W,H);c.fill();
+  const dx=W*.1,dy=trackY(dx,H);
+  c.fillStyle=scene.night?'#5a3e2a':'#8a5a3a';c.fillRect(dx-34,dy-30,68,26);
+  c.fillStyle=scene.night?'#2a1e16':'#4a3426';c.beginPath();c.moveTo(dx-40,dy-30);c.lineTo(dx,dy-46);c.lineTo(dx+40,dy-30);c.fill();
+  c.fillStyle=scene.night?'#ffd87a':'#e9e3cf';[-22,-6,10].forEach(o=>c.fillRect(dx+o,dy-24,9,10));
+  c.fillStyle=scene.night?'#cfc6a6':'#f1ead6';c.font='bold 8px "Libre Franklin",sans-serif';c.textAlign='center';c.fillText('POTLATCH',dx,dy-33);
+  if(scene.night){c.fillStyle='rgba(255,216,122,.18)';c.beginPath();c.arc(dx,dy-16,46,0,7);c.fill()}
+  // track
+  c.strokeStyle='#4a3a2c';c.lineWidth=2;for(let x=-4;x<W+8;x+=7){const y=trackY(x,H);c.beginPath();c.moveTo(x,y+1);c.lineTo(x+2,y+5);c.stroke()}
+  c.strokeStyle=scene.night?'#8792a6':'#5b5f62';c.lineWidth=1.6;c.beginPath();for(let x=0;x<=W;x+=4){const y=trackY(x,H);x?c.lineTo(x,y):c.moveTo(x,y)}c.stroke();
+  // train
+  const unit=Math.max(.7,Math.min(1.15,W/900));
+  const lens={diesel:62,steam:70,coach:66,open:58,box:54,lumber:58};
+  const total=scene.train.reduce((a,u)=>a+lens[u.k]*unit+4,0);
+  if(dt){trainX+=dt*(scene.slow?22:48)*unit;if(trainX-total>W+40)trainX=-60}
+  let x=trainX;
+  scene.train.forEach((u,i)=>{const L=lens[u.k]*unit,cx=x-L/2;drawCar(c,u.k,cx,H,L,unit,i===0);x-=L+4*unit});
+  // smoke / exhaust
+  if(dt){const head=trainX-10*unit,hy=trackY(head,H)-(scene.steam?30:24)*unit;if(Math.random()<(scene.steam?.6:.18))puffs.push({x:head,y:hy,r:(scene.steam?4:2.5)*unit,a:scene.steam?.55:.3,life:0})}
+  for(let i=puffs.length-1;i>=0;i--){const p=puffs[i];if(dt){p.life+=dt;p.y-=dt*14;p.x-=dt*10;p.r+=dt*(scene.steam?7:3);p.a-=dt*(scene.steam?.22:.25)}
+    if(p.a<=0){puffs.splice(i,1);continue}c.fillStyle=scene.steam?`rgba(${scene.night?'200,205,215':'235,235,232'},${p.a})`:`rgba(70,70,70,${p.a})`;c.beginPath();c.arc(p.x,p.y,p.r,0,7);c.fill()}
+  // snow
+  if(scene.snow){c.fillStyle='rgba(255,255,255,.9)';flakes.forEach(f=>{if(dt){f.y+=dt*f.v*.12;f.x+=dt*.01*Math.sin(sceneT+f.v*9);if(f.y>1)f.y=0}c.beginPath();c.arc((f.x%1)*W,f.y*H,f.r,0,7);c.fill()})}
+}
+function drawCar(c,k,cx,H,L,u,isHead){
+  const y=trackY(cx,H),y2=trackY(cx+2,H),ang=Math.atan2(y2-y,2);
+  c.save();c.translate(cx,y-3*u);c.rotate(ang);
+  const wheel=(xx)=>{c.fillStyle='#1d1d1d';c.beginPath();c.arc(xx,0,3.2*u,0,7);c.fill()};
+  const half=L/2, night=scene.night;
+  if(k==='diesel'){
+    wheel(-half+8*u);wheel(-half+16*u);wheel(half-16*u);wheel(half-8*u);
+    c.fillStyle='#2a2a2a';c.fillRect(-half,-6*u,L,4*u);
+    c.fillStyle='#2d5a3f';c.fillRect(-half+4*u,-20*u,L-22*u,14*u);
+    c.fillStyle='#2d5a3f';c.fillRect(half-20*u,-26*u,16*u,20*u);
+    c.fillStyle='#e0b13d';c.fillRect(-half+4*u,-10*u,L-8*u,2.5*u);
+    c.fillStyle=night?'#ffe39a':'#bcd3dc';c.fillRect(half-16*u,-23*u,9*u,6*u);
+    c.fillStyle='#e0b13d';c.font=`bold ${7*u}px "Big Shoulders Display",sans-serif`;c.textAlign='center';c.fillText('WI&M',-half+(L-22*u)/2+4*u,-12*u);
+    if(isHead){c.fillStyle='#fff6c8';c.beginPath();c.arc(half,-16*u,2*u,0,7);c.fill();if(night){c.fillStyle='rgba(255,240,180,.18)';c.beginPath();c.moveTo(half,-16*u);c.lineTo(half+90*u,-30*u);c.lineTo(half+90*u,0);c.fill()}}
+  }else if(k==='steam'){
+    wheel(-half+12*u);wheel(-half+22*u);c.fillStyle='#1d1d1d';[0,10].forEach(o=>{c.beginPath();c.arc(o*u-4*u,-1*u,5*u,0,7);c.fill()});wheel(half-6*u);
+    c.fillStyle='#202020';c.fillRect(-half,-24*u,18*u,18*u);
+    c.fillStyle=night?'#ffd27a':'#a9c0c8';c.fillRect(-half+4*u,-21*u,8*u,6*u);
+    c.fillStyle='#151515';c.fillRect(-half+18*u,-19*u,L-22*u,12*u);
+    c.beginPath();c.arc(half-4*u,-13*u,6*u,-Math.PI/2,Math.PI/2);c.fill();
+    c.fillRect(half-14*u,-29*u,5*u,10*u);c.fillRect(-half+30*u,-24*u,6*u,5*u);
+    c.fillStyle='#c79a3a';c.fillRect(-half+18*u,-12*u,L-22*u,1.5*u);
+    if(isHead){c.fillStyle='#fff6c8';c.beginPath();c.arc(half-2*u,-21*u,2*u,0,7);c.fill()}
+  }else if(k==='coach'||k==='open'){
+    wheel(-half+7*u);wheel(-half+14*u);wheel(half-14*u);wheel(half-7*u);
+    if(k==='open'){c.fillStyle='#6b4a2a';c.fillRect(-half+2*u,-10*u,L-4*u,5*u);c.fillStyle='#2d5a3f';c.fillRect(-half+2*u,-22*u,L-4*u,2.5*u);
+      for(let i=0;i<6;i++){c.fillRect(-half+5*u+i*(L-10*u)/5,-22*u,1.5*u,12*u)}c.fillStyle='#d4a35a';for(let i=0;i<5;i++){c.beginPath();c.arc(-half+10*u+i*(L-18*u)/4,-14*u,2.2*u,0,7);c.fill()}}
+    else{c.fillStyle='#2d5a3f';c.fillRect(-half+2*u,-24*u,L-4*u,19*u);
+      c.fillStyle='#22402f';c.beginPath();c.moveTo(-half+2*u,-24*u);c.quadraticCurveTo(0,-30*u,half-2*u,-24*u);c.fill();
+      c.fillStyle='#e0b13d';c.fillRect(-half+2*u,-8*u,L-4*u,1.6*u);
+      const nw=6;for(let i=0;i<nw;i++){c.fillStyle=night?'#ffd77a':'#cfe0e6';c.fillRect(-half+7*u+i*(L-14*u)/nw,-20*u,5*u,6*u)}
+      if(scene.lights){const cols=['#ff5a4f','#ffd34f','#5fd38a','#5fb4ff'];for(let i=0;i<9;i++){c.fillStyle=cols[(i+Math.floor(sceneT*2))%4];c.beginPath();c.arc(-half+4*u+i*(L-8*u)/8,-26.5*u+Math.sin(i/8*Math.PI)*-2*u,1.4*u,0,7);c.fill()}}}
+  }else if(k==='box'){
+    wheel(-half+6*u);wheel(-half+12*u);wheel(half-12*u);wheel(half-6*u);
+    c.fillStyle='#7a3b26';c.fillRect(-half+2*u,-24*u,L-4*u,19*u);c.strokeStyle='rgba(0,0,0,.25)';c.lineWidth=1;for(let i=1;i<6;i++){c.beginPath();c.moveTo(-half+2*u+i*(L-4*u)/6,-24*u);c.lineTo(-half+2*u+i*(L-4*u)/6,-5*u);c.stroke()}
+    c.fillStyle='#e8dcc3';c.font=`bold ${5*u}px "Libre Franklin",sans-serif`;c.textAlign='center';c.fillText('BENNETT',0,-14*u);
+  }else{
+    wheel(-half+6*u);wheel(-half+12*u);wheel(half-12*u);wheel(half-6*u);
+    c.fillStyle='#3a3a3a';c.fillRect(-half+2*u,-8*u,L-4*u,3*u);c.fillRect(-1*u,-26*u,2*u,18*u);
+    c.fillStyle='#e6c25a';[-1,1].forEach(sd=>{const x0=sd<0?-half+4*u:2*u,w=half-6*u;c.fillRect(x0,-22*u,w,14*u);c.fillStyle='#c99f3b';c.fillRect(x0,-16*u,w,1.2*u);c.fillStyle='#e6c25a'});
+  }
+  c.restore();
+}
+function sceneLoop(ts){if(!document.hidden){const dt=lastTS?Math.min(.05,(ts-lastTS)/1000):0;sceneT+=dt;drawScene(dt)}lastTS=ts;requestAnimationFrame(sceneLoop)}
+function startScene(){trainX=($('#scene').clientWidth||800)*.55;if(reduceMotion){drawScene(0);window.addEventListener('resize',()=>drawScene(0))}else requestAnimationFrame(sceneLoop)}
+
+/* ---------- assumptions & wiring ---------- */
+function renderAssumptions(){
+  $('#assumptions').innerHTML=Object.keys(DEFAULT_A).map(k=>`<div class="field"><label for="a-${k}" style="font-weight:500">${A_LABELS[k]}</label><input class="txt mono" type="number" id="a-${k}" data-a="${k}" value="${A[k]}" step="any"></div>`).join('')+`<div class="field" style="justify-content:flex-end"><button class="btn alt" id="aReset">Reset to defaults</button></div>`;
+  document.querySelectorAll('[data-a]').forEach(i=>i.onchange=()=>{const v=parseFloat(i.value);if(isFinite(v)&&v>=0){A[i.dataset.a]=v;save();render()}});
+  $('#aReset').onclick=()=>{A={...DEFAULT_A};renderAssumptions();save();render()};
+}
+const KEY='wim-dispatcher.v1';
+function save(){try{localStorage.setItem(KEY,JSON.stringify({s,A,lastLab}))}catch(e){}}
+function load(){try{const d=JSON.parse(localStorage.getItem(KEY)||'null');if(d&&d.s)return d}catch(e){}return null}
+function bind(){
+  $('#runBtn').onclick=runMonth;$('#run3Btn').onclick=()=>runMany(3);$('#labRun').onclick=runLab;
+  let armed=false;$('#newGame').onclick=()=>{if(!armed){armed=true;$('#newGame').textContent='Tap again to erase this game';$('#newGameConfirm').textContent='This wipes the saved game in this browser.';setTimeout(()=>{armed=false;$('#newGame').textContent='Start over from October 2026';$('#newGameConfirm').textContent=''},4000);return}
+    armed=false;s=newState();prepareMonth();lastLab=null;labSel={};save();render();renderLab();$('#newGame').textContent='Start over from October 2026';$('#newGameConfirm').textContent=''};
+  document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{document.querySelectorAll('.tab').forEach(x=>x.setAttribute('aria-selected',x===t?'true':'false'));
+    ['operate','projects','lab','ledger'].forEach(k=>$('#tab-'+k).hidden=k!==t.dataset.tab);
+    if(t.dataset.tab==='ledger')renderLedger();if(t.dataset.tab==='lab')renderLab()});
+  const redraw=()=>{renderRoute();if(!$('#tab-ledger').hidden)renderLedger();if(!$('#tab-lab').hidden&&lastLab)renderLab()};
+  window.addEventListener('resize',()=>{if(!$('#tab-ledger').hidden)renderLedger();if(!$('#tab-lab').hidden&&lastLab)renderLab()});
+  try{matchMedia('(prefers-color-scheme: dark)').addEventListener('change',redraw)}catch(e){}
+  new MutationObserver(redraw).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+}
+function start(data){
+  const d=(data&&data.s)?data:load();
+  if(d){s=d.s;A={...DEFAULT_A,...(d.A||{})};lastLab=d.lastLab||null}else s=newState();
+  prepareMonth();bind();renderAssumptions();render();renderLab();save();startScene();
+}
+start({});
+})();
+</script>
+
+</body>
+</html>
